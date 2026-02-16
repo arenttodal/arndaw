@@ -9,18 +9,22 @@ extension UTType {
     static var dawProject: UTType {
         UTType(exportedAs: "com.musio.create.project")
     }
+
+    static var ritualSession: UTType {
+        UTType(exportedAs: "com.ritual.session")
+    }
 }
 
 // MARK: - Main App
 
 @main
-struct DAWApp: App {
+struct RitualApp: App {
     @StateObject private var appState = AppState()
-    
+
     var body: some Scene {
         // Main document window
         WindowGroup {
-            MainWindowView(project: appState.currentProject)
+            RitualRootView(project: appState.currentProject)
                 .environmentObject(appState)
                 .id(appState.projectID)  // Force view recreation when project changes
                 .onReceive(NotificationCenter.default.publisher(for: .projectDidChange)) { notification in
@@ -34,10 +38,15 @@ struct DAWApp: App {
         .commands {
             // File commands
             CommandGroup(replacing: .newItem) {
-                Button("New Project") {
-                    appState.newProject()
+                Button("New Session") {
+                    appState.newRitualSession()
                 }
                 .keyboardShortcut("n", modifiers: .command)
+
+                Button("New Studio Project") {
+                    appState.newProject()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             }
             
             CommandGroup(after: .newItem) {
@@ -187,7 +196,8 @@ class AppState: ObservableObject {
     private let fileManager = ProjectFileManager()
     
     init() {
-        self.currentProject = ProjectFactory.createNewProject()
+        // Default to a Ritual session (capture mode with 8 performance tracks)
+        self.currentProject = ProjectFactory.createRitualSession()
         setupAutosave()
     }
     
@@ -348,14 +358,25 @@ class AppState: ObservableObject {
     func newProject() {
         // TODO: Prompt to save if needed
         autosaveManager.stopAutosave()
-        
+
         // Clear all existing plugins first
         NotificationCenter.default.post(name: .clearAllPlugins, object: nil)
-        
+
         currentProject = ProjectFactory.createNewProject()
         currentProjectURL = nil
         hasUnsavedChanges = false
         projectID = UUID()  // Force view refresh
+        updateWindowTitle()
+    }
+
+    func newRitualSession() {
+        autosaveManager.stopAutosave()
+        NotificationCenter.default.post(name: .clearAllPlugins, object: nil)
+
+        currentProject = ProjectFactory.createRitualSession()
+        currentProjectURL = nil
+        hasUnsavedChanges = false
+        projectID = UUID()
         updateWindowTitle()
     }
 }

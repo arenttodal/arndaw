@@ -4,7 +4,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "MusioCreate",
+    name: "Ritual",
     platforms: [
         .macOS(.v14)
     ],

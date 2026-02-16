@@ -41,10 +41,19 @@ public struct Project: Identifiable, Codable, Sendable {
     // DAW UI state (panels, zoom, etc.)
     public var dawState: DAWState
     
+    // Ritual Mode
+    public var currentMode: RitualMode
+
+    // Track role assignments (performance mode)
+    public var trackRoles: TrackRoleAssignment
+
+    // Scenes (for Perform Mode)
+    public var scenes: SceneList
+
     // Version for migration
     public var formatVersion: Int
-    
-    public static let currentFormatVersion = 1
+
+    public static let currentFormatVersion = 2
     
     public init(
         id: UUID = UUID(),
@@ -73,12 +82,29 @@ public struct Project: Identifiable, Codable, Sendable {
         self.audioFiles = []
         self.metadata = ProjectMetadata()
         self.dawState = DAWState()
+        self.currentMode = .capture
+        self.trackRoles = TrackRoleAssignment()
+        self.scenes = SceneList()
         self.formatVersion = Self.currentFormatVersion
     }
     
+    // MARK: - Mode Helpers
+
+    /// Whether the project is in a performance mode (track limit enforced)
+    public var isPerformanceMode: Bool {
+        currentMode.isPerformanceMode
+    }
+
+    /// Whether another track can be added in the current mode
+    public var canAddTrack: Bool {
+        tracks.count < currentMode.maxTracks
+    }
+
     // MARK: - Track Management
-    
+
     public mutating func addTrack(_ track: Track) {
+        // Enforce track limit in performance modes
+        guard canAddTrack else { return }
         tracks.append(track)
         modifiedAt = Date()
     }
@@ -331,14 +357,14 @@ public struct OpenPluginWindow: Codable, Sendable, Identifiable {
 // MARK: - Project Factory
 
 public enum ProjectFactory {
-    /// Create a new empty project with default tracks
+    /// Create a new empty project with default tracks (legacy/studio mode)
     public static func createNewProject(
         name: String = "Untitled Project",
         sampleRate: Double = 44100,
         includeDefaultTracks: Bool = true
     ) -> Project {
         var project = Project(name: name, sampleRate: sampleRate)
-        
+
         if includeDefaultTracks {
             // Add one audio track and four MIDI tracks by default
             project.addTrack(Track(
@@ -346,32 +372,59 @@ public enum ProjectFactory {
                 type: .audio,
                 color: .blue
             ))
-            
+
             project.addTrack(Track(
                 name: "Midi 1",
                 type: .midi,
                 color: .green
             ))
-            
+
             project.addTrack(Track(
                 name: "Midi 2",
                 type: .midi,
                 color: .orange
             ))
-            
+
             project.addTrack(Track(
                 name: "Midi 3",
                 type: .midi,
                 color: .yellow
             ))
-            
+
             project.addTrack(Track(
                 name: "Midi 4",
                 type: .midi,
                 color: .cyan
             ))
         }
-        
+
+        return project
+    }
+
+    /// Create a new Ritual session with 8 performance tracks
+    public static func createRitualSession(
+        name: String = "New Session",
+        sampleRate: Double = 48000,
+        mode: RitualMode = .capture
+    ) -> Project {
+        var project = Project(name: name, sampleRate: sampleRate)
+        project.currentMode = mode
+        project.tempo = Tempo(bpm: 120)
+
+        // Create the 8 performance tracks with roles
+        let roles = TrackRole.allCases
+        for role in roles {
+            let trackType: TrackType = role == .groove ? .bus : (role.isMelodic ? .instrument : .instrument)
+            let track = Track(
+                name: role.displayName,
+                type: trackType,
+                color: role.defaultColor
+            )
+            project.tracks.append(track)
+            project.trackRoles.assign(role: role, to: track.id)
+        }
+
+        project.modifiedAt = Date()
         return project
     }
 }
