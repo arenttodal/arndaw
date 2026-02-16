@@ -1,0 +1,377 @@
+import Foundation
+
+// MARK: - Project
+
+/// The root model representing an entire DAW project
+public struct Project: Identifiable, Codable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var createdAt: Date
+    public var modifiedAt: Date
+    
+    // Tempo and time signature
+    public var tempo: Tempo
+    public var timeSignature: TimeSignature
+    public var tempoChanges: [TempoChange]
+    public var timeSignatureChanges: [TimeSignatureChange]
+    
+    // Sample rate
+    public var sampleRate: Double
+    
+    // Tracks
+    public var tracks: [Track]
+    public var masterTrack: Track
+    
+    // V-Rack (multi-timbral instrument hosting)
+    public var vRack: VRack
+
+    // Markers
+    public var markers: [Marker]
+    
+    // Loop region
+    public var loopRegion: TimeRange?
+    public var isLoopEnabled: Bool
+    
+    // Audio files referenced by this project
+    public var audioFiles: [AudioFileReference]
+    
+    // Project metadata
+    public var metadata: ProjectMetadata
+    
+    // DAW UI state (panels, zoom, etc.)
+    public var dawState: DAWState
+    
+    // Version for migration
+    public var formatVersion: Int
+    
+    public static let currentFormatVersion = 1
+    
+    public init(
+        id: UUID = UUID(),
+        name: String = "Untitled Project",
+        sampleRate: Double = 44100
+    ) {
+        self.id = id
+        self.name = name
+        self.createdAt = Date()
+        self.modifiedAt = Date()
+        self.tempo = Tempo(bpm: 120)
+        self.timeSignature = .common
+        self.tempoChanges = []
+        self.timeSignatureChanges = []
+        self.sampleRate = sampleRate
+        self.tracks = []
+        self.masterTrack = Track(
+            name: "Master",
+            type: .master,
+            color: .gray
+        )
+        self.vRack = VRack()
+        self.markers = []
+        self.loopRegion = nil
+        self.isLoopEnabled = false
+        self.audioFiles = []
+        self.metadata = ProjectMetadata()
+        self.dawState = DAWState()
+        self.formatVersion = Self.currentFormatVersion
+    }
+    
+    // MARK: - Track Management
+    
+    public mutating func addTrack(_ track: Track) {
+        tracks.append(track)
+        modifiedAt = Date()
+    }
+    
+    public mutating func removeTrack(id: TrackID) {
+        tracks.removeAll { $0.id == id }
+        modifiedAt = Date()
+    }
+    
+    public mutating func moveTrack(from sourceIndex: Int, to destinationIndex: Int) {
+        guard sourceIndex != destinationIndex,
+              sourceIndex >= 0 && sourceIndex < tracks.count,
+              destinationIndex >= 0 && destinationIndex <= tracks.count else {
+            return
+        }
+        let track = tracks.remove(at: sourceIndex)
+        let adjustedIndex = sourceIndex < destinationIndex ? destinationIndex - 1 : destinationIndex
+        tracks.insert(track, at: adjustedIndex)
+        modifiedAt = Date()
+    }
+    
+    public func track(withID id: TrackID) -> Track? {
+        tracks.first { $0.id == id }
+    }
+    
+    public mutating func updateTrack(_ track: Track) {
+        if let index = tracks.firstIndex(where: { $0.id == track.id }) {
+            tracks[index] = track
+            modifiedAt = Date()
+        }
+    }
+    
+    // MARK: - Tempo at Position
+    
+    /// Get tempo at a specific beat position (accounts for tempo changes)
+    public func tempo(atBeat beat: Double) -> Double {
+        let sorted = tempoChanges.sorted { $0.beatPosition < $1.beatPosition }
+        
+        // Find the last tempo change before this position
+        for change in sorted.reversed() {
+            if change.beatPosition <= beat {
+                return change.tempo.bpm
+            }
+        }
+        
+        return tempo.bpm
+    }
+    
+    /// Get time signature at a specific beat position
+    public func timeSignature(atBeat beat: Double) -> TimeSignature {
+        let sorted = timeSignatureChanges.sorted { $0.beatPosition < $1.beatPosition }
+        
+        for change in sorted.reversed() {
+            if change.beatPosition <= beat {
+                return change.timeSignature
+            }
+        }
+        
+        return timeSignature
+    }
+    
+    // MARK: - Project Duration
+    
+    /// Total project duration based on content
+    public var duration: TimePosition {
+        var maxEnd = TimePosition(samples: 0, sampleRate: sampleRate)
+        
+        for track in tracks {
+            for clip in track.clips {
+                if clip.timeRange.end > maxEnd {
+                    maxEnd = clip.timeRange.end
+                }
+            }
+        }
+        
+        return maxEnd
+    }
+    
+    /// Duration in beats
+    public var durationInBeats: Double {
+        duration.beats(atTempo: tempo.bpm)
+    }
+}
+
+// MARK: - Tempo Change
+
+public struct TempoChange: Identifiable, Codable, Sendable {
+    public var id: UUID
+    public var beatPosition: Double
+    public var tempo: Tempo
+    public var curveType: AutomationCurve  // For gradual tempo changes
+    
+    public init(
+        id: UUID = UUID(),
+        beatPosition: Double,
+        tempo: Tempo,
+        curveType: AutomationCurve = .step
+    ) {
+        self.id = id
+        self.beatPosition = beatPosition
+        self.tempo = tempo
+        self.curveType = curveType
+    }
+}
+
+// MARK: - Time Signature Change
+
+public struct TimeSignatureChange: Identifiable, Codable, Sendable {
+    public var id: UUID
+    public var beatPosition: Double  // Must align to bar boundary
+    public var timeSignature: TimeSignature
+    
+    public init(
+        id: UUID = UUID(),
+        beatPosition: Double,
+        timeSignature: TimeSignature
+    ) {
+        self.id = id
+        self.beatPosition = beatPosition
+        self.timeSignature = timeSignature
+    }
+}
+
+// MARK: - Marker
+
+public struct Marker: Identifiable, Codable, Sendable {
+    public var id: UUID
+    public var name: String
+    public var beatPosition: Double
+    public var color: TrackColor
+    public var type: MarkerType
+    
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        beatPosition: Double,
+        color: TrackColor = .blue,
+        type: MarkerType = .generic
+    ) {
+        self.id = id
+        self.name = name
+        self.beatPosition = beatPosition
+        self.color = color
+        self.type = type
+    }
+}
+
+public enum MarkerType: String, Codable, Sendable {
+    case generic
+    case verse
+    case chorus
+    case bridge
+    case intro
+    case outro
+    case drop
+    case breakdown
+    case cuePoint
+}
+
+// MARK: - Project Metadata
+
+public struct ProjectMetadata: Codable, Sendable {
+    public var artist: String
+    public var album: String
+    public var genre: String
+    public var comments: String
+    public var copyright: String
+    
+    public init(
+        artist: String = "",
+        album: String = "",
+        genre: String = "",
+        comments: String = "",
+        copyright: String = ""
+    ) {
+        self.artist = artist
+        self.album = album
+        self.genre = genre
+        self.comments = comments
+        self.copyright = copyright
+    }
+}
+
+// MARK: - DAW State (UI/View State that persists with project)
+
+public struct DAWState: Codable, Sendable {
+    // Panel visibility
+    public var showVRack: Bool
+    public var showMixer: Bool
+    public var showInspector: Bool
+    
+    // Zoom and scroll
+    public var zoomLevel: Double
+    public var horizontalScrollOffset: Double
+    public var verticalScrollOffset: Double
+    
+    // Selection
+    public var selectedTrackID: TrackID?
+    public var playheadPosition: Double  // in beats
+    
+    // Open plugin windows (by rack instrument ID or track plugin slot)
+    public var openPluginWindows: [OpenPluginWindow]
+    
+    public init(
+        showVRack: Bool = false,
+        showMixer: Bool = false,
+        showInspector: Bool = false,
+        zoomLevel: Double = 1.0,
+        horizontalScrollOffset: Double = 0,
+        verticalScrollOffset: Double = 0,
+        selectedTrackID: TrackID? = nil,
+        playheadPosition: Double = 0,
+        openPluginWindows: [OpenPluginWindow] = []
+    ) {
+        self.showVRack = showVRack
+        self.showMixer = showMixer
+        self.showInspector = showInspector
+        self.zoomLevel = zoomLevel
+        self.horizontalScrollOffset = horizontalScrollOffset
+        self.verticalScrollOffset = verticalScrollOffset
+        self.selectedTrackID = selectedTrackID
+        self.playheadPosition = playheadPosition
+        self.openPluginWindows = openPluginWindows
+    }
+}
+
+public struct OpenPluginWindow: Codable, Sendable, Identifiable {
+    public var id: UUID  // Plugin slot ID
+    public var windowFrame: CGRect?
+    public var isRackInstrument: Bool
+    public var rackInstrumentID: UUID?
+    public var trackID: UUID?
+    
+    public init(
+        id: UUID,
+        windowFrame: CGRect? = nil,
+        isRackInstrument: Bool = false,
+        rackInstrumentID: UUID? = nil,
+        trackID: UUID? = nil
+    ) {
+        self.id = id
+        self.windowFrame = windowFrame
+        self.isRackInstrument = isRackInstrument
+        self.rackInstrumentID = rackInstrumentID
+        self.trackID = trackID
+    }
+}
+
+
+// MARK: - Project Factory
+
+public enum ProjectFactory {
+    /// Create a new empty project with default tracks
+    public static func createNewProject(
+        name: String = "Untitled Project",
+        sampleRate: Double = 44100,
+        includeDefaultTracks: Bool = true
+    ) -> Project {
+        var project = Project(name: name, sampleRate: sampleRate)
+        
+        if includeDefaultTracks {
+            // Add one audio track and four MIDI tracks by default
+            project.addTrack(Track(
+                name: "Audio 1",
+                type: .audio,
+                color: .blue
+            ))
+            
+            project.addTrack(Track(
+                name: "Midi 1",
+                type: .midi,
+                color: .green
+            ))
+            
+            project.addTrack(Track(
+                name: "Midi 2",
+                type: .midi,
+                color: .orange
+            ))
+            
+            project.addTrack(Track(
+                name: "Midi 3",
+                type: .midi,
+                color: .yellow
+            ))
+            
+            project.addTrack(Track(
+                name: "Midi 4",
+                type: .midi,
+                color: .cyan
+            ))
+        }
+        
+        return project
+    }
+}
